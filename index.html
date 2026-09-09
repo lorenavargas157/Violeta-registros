@@ -55,6 +55,15 @@
   .stat.feed{border-color:var(--feed);}
   .stat.diaper{border-color:var(--diaper);}
   .stat.sleep{border-color:var(--sleep);}
+  .stat .badge{
+    display:inline-block;
+    margin-top:5px;
+    font-size:10.5px;
+    font-weight:600;
+    padding:2px 8px;
+    border-radius:20px;
+    letter-spacing:0.01em;
+  }
   .actions{display:flex; flex-direction:column; gap:10px; margin-bottom:26px;}
   .action{border-radius:var(--radius); border:none; padding:14px 16px; font-size:16px; font-weight:600; font-family:'Public Sans',sans-serif; color:#fff; display:flex; align-items:center; justify-content:space-between; cursor:pointer; width:100%; transition:transform 0.12s ease;}
   .action:active{transform:scale(0.98);}
@@ -128,6 +137,17 @@
     const rem = m%60;
     return 'hace '+h+'h'+(rem?' '+rem+'min':'');
   }
+  // Máximo recomendado entre tomas para un recién nacido: ~3 horas
+  const FEED_MAX_HOURS = 3;
+  const FEED_WARN_HOURS = 2;
+  function feedStatus(ts){
+    if(!ts) return null;
+    const hours = (Date.now()-ts)/3600000;
+    if(hours < FEED_WARN_HOURS) return {label:'En tiempo', color:'#3E6B4F', bg:'#DCEBE0'};
+    if(hours < FEED_MAX_HOURS) return {label:'Se acerca la hora', color:'#8A6A00', bg:'#F5E8C7'};
+    return {label:'¡Ya tocaba!', color:'#A43E3E', bg:'#F5D9D9'};
+  }
+
   function lastOf(type){
     const filtered = entries.filter(e=>e.type===type);
     if(!filtered.length) return null;
@@ -209,6 +229,7 @@
         <div class="stat feed">
           <div class="label">Última toma</div>
           <div class="value">${lastFeed ? timeAgo(lastFeed.ts) : '—'}</div>
+          ${lastFeed ? (()=>{ const s=feedStatus(lastFeed.ts); return `<span class="badge" style="color:${s.color};background:${s.bg}">${s.label}</span>`; })() : ''}
         </div>
         <div class="stat diaper">
           <div class="label">Último pañal</div>
