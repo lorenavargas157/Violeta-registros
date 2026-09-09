@@ -89,6 +89,31 @@
   .entry .time{font-size:12px; color:var(--ink-soft);}
   .entry .del{background:none; border:none; color:var(--ink-soft); font-size:16px; cursor:pointer; padding:2px 6px;}
   .empty{text-align:center; color:var(--ink-soft); font-size:14px; padding:24px 10px; border:1px dashed var(--line); border-radius:var(--radius);}
+
+  .entry .edit{background:none; border:none; color:var(--ink-soft); font-size:14px; cursor:pointer; padding:2px 6px;}
+  .add-past{
+    display:block; width:100%; text-align:center; background:none; border:1px dashed var(--line);
+    color:var(--ink-soft); font-size:13px; padding:10px; border-radius:14px; margin-top:4px; cursor:pointer;
+  }
+  .sleep-edit-link{background:none; border:none; color:var(--ink-soft); font-size:10.5px; text-decoration:underline; padding:0; margin-top:3px; cursor:pointer;}
+
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(55,41,44,0.45); display:flex; align-items:flex-end;
+    justify-content:center; z-index:50;
+  }
+  .modal{
+    background:var(--card); width:100%; max-width:480px; border-radius:22px 22px 0 0; padding:20px 18px 28px;
+  }
+  .modal h3{font-family:'Lora',serif; font-size:18px; margin:0 0 14px;}
+  .modal label{display:block; font-size:12px; color:var(--ink-soft); margin:12px 0 4px;}
+  .modal select, .modal input[type="datetime-local"]{
+    width:100%; padding:10px; border-radius:12px; border:1px solid var(--line); background:#fff; font-size:14px; color:var(--ink); font-family:'Public Sans',sans-serif;
+  }
+  .modal .checkrow{display:flex; align-items:center; gap:8px; margin-top:12px; font-size:13px; color:var(--ink);}
+  .modal-buttons{display:flex; gap:10px; margin-top:20px;}
+  .modal-buttons button{flex:1; border:none; border-radius:12px; padding:12px; font-size:14px; font-weight:600; cursor:pointer;}
+  .modal-buttons .cancel{background:var(--bg); color:var(--ink-soft); border:1px solid var(--line);}
+  .modal-buttons .save{background:var(--sleep); color:#fff;}
 </style>
 </head>
 <body>
@@ -100,8 +125,20 @@
   let entries = [];
   let sleepStart = null;
   let openPanel = null;
+  let modal = null;
 
   const root = document.getElementById('root');
+
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function toInputVal(ts){
+    if(!ts) return '';
+    const d = new Date(ts);
+    return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+'T'+pad(d.getHours())+':'+pad(d.getMinutes());
+  }
+  function fromInputVal(str){
+    if(!str) return null;
+    return new Date(str).getTime();
+  }
 
   function load(){
     try{
@@ -203,6 +240,138 @@
   }
   function togglePanel(name){ openPanel = openPanel===name ? null : name; render(); }
 
+  function openAddModal(){
+    modal = {mode:'add', type:'feed', subtype:'pecho', start:toInputVal(Date.now()), end:'', ongoing:false};
+    render();
+  }
+  function openEditModal(entry){
+    modal = {
+      mode:'edit', id:entry.id, type:entry.type, subtype:entry.subtype||'',
+      start:toInputVal(entry.ts), end:entry.end?toInputVal(entry.end):'', ongoing:false
+    };
+    render();
+  }
+  function openEditSleepStart(){
+    modal = {mode:'editSleepStart', start:toInputVal(sleepStart)};
+    render();
+  }
+  function closeModal(){ modal = null; render(); }
+
+  function modalSetField(field, value){
+    modal[field] = value;
+    render();
+  }
+
+  function saveModal(){
+    if(modal.mode==='editSleepStart'){
+      const t = fromInputVal(modal.start);
+      if(t) sleepStart = t;
+      closeModal(); save(); return;
+    }
+    if(modal.mode==='edit'){
+      const e = entries.find(x=>x.id===modal.id);
+      if(e){
+        e.ts = fromInputVal(modal.start) || e.ts;
+        if(e.type==='feed' || e.type==='diaper') e.subtype = modal.subtype;
+        if(e.type==='sleep' && modal.end) e.end = fromInputVal(modal.end);
+      }
+      closeModal(); save(); return;
+    }
+    if(modal.mode==='add'){
+      const startTs = fromInputVal(modal.start) || Date.now();
+      if(modal.type==='sleep'){
+        if(modal.ongoing){
+          sleepStart = startTs;
+        } else {
+          entries.push({id:Date.now()+'-'+Math.random(), type:'sleep', ts:startTs, end: fromInputVal(modal.end) || startTs});
+        }
+      } else {
+        entries.push({id:Date.now()+'-'+Math.random(), type:modal.type, subtype:modal.subtype, ts:startTs});
+      }
+      closeModal(); save(); return;
+    }
+  }
+
+  function renderModal(){
+    if(!modal) return '';
+    const isAdd = modal.mode==='add';
+    const isSleepStartEdit = modal.mode==='editSleepStart';
+    let title = 'Editar registro';
+    if(isAdd) title = 'Agregar registro atrasado';
+    if(isSleepStartEdit) title = 'Editar hora en que se durmió';
+
+    let body = '';
+    if(isSleepStartEdit){
+      body = `
+        <label>Hora en que se durmió</label>
+        <input type="datetime-local" data-field="start" value="${modal.start}">
+      `;
+    } else {
+      const typeSelector = isAdd ? `
+        <label>Tipo</label>
+        <select data-field="type">
+          <option value="feed" ${modal.type==='feed'?'selected':''}>Toma</option>
+          <option value="diaper" ${modal.type==='diaper'?'selected':''}>Pañal</option>
+          <option value="sleep" ${modal.type==='sleep'?'selected':''}>Sueño</option>
+        </select>
+      ` : '';
+
+      let subtypeField = '';
+      if(modal.type==='feed'){
+        subtypeField = `
+          <label>Tipo de toma</label>
+          <select data-field="subtype">
+            <option value="pecho" ${modal.subtype==='pecho'?'selected':''}>Pecho</option>
+            <option value="biberon" ${modal.subtype==='biberon'?'selected':''}>Biberón</option>
+          </select>`;
+      } else if(modal.type==='diaper'){
+        subtypeField = `
+          <label>Tipo de pañal</label>
+          <select data-field="subtype">
+            <option value="mojado" ${modal.subtype==='mojado'?'selected':''}>Mojado</option>
+            <option value="sucio" ${modal.subtype==='sucio'?'selected':''}>Sucio</option>
+            <option value="mixto" ${modal.subtype==='mixto'?'selected':''}>Mixto</option>
+          </select>`;
+      }
+
+      let sleepFields = '';
+      if(modal.type==='sleep'){
+        sleepFields = `
+          <label>Empezó a dormir</label>
+          <input type="datetime-local" data-field="start" value="${modal.start}">
+          ${isAdd ? `
+          <div class="checkrow">
+            <input type="checkbox" id="ongoing" data-field="ongoing" ${modal.ongoing?'checked':''}>
+            <label style="margin:0;" for="ongoing">Todavía sigue durmiendo</label>
+          </div>` : ''}
+          ${(!modal.ongoing) ? `
+          <label>Despertó</label>
+          <input type="datetime-local" data-field="end" value="${modal.end}">` : ''}
+        `;
+      }
+
+      const timeField = (modal.type!=='sleep') ? `
+        <label>Hora</label>
+        <input type="datetime-local" data-field="start" value="${modal.start}">
+      ` : '';
+
+      body = typeSelector + subtypeField + timeField + sleepFields;
+    }
+
+    return `
+      <div class="modal-backdrop" data-action="modal-backdrop">
+        <div class="modal" data-stop>
+          <h3>${title}</h3>
+          ${body}
+          <div class="modal-buttons">
+            <button class="cancel" data-action="modal-cancel">Cancelar</button>
+            <button class="save" data-action="modal-save">Guardar</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function render(){
     const lastFeed = lastOf('feed');
     const lastDiaper = lastOf('diaper');
@@ -238,6 +407,7 @@
         <div class="stat sleep">
           <div class="label">${sleepStart? 'Durmiendo desde' : 'Despertó'}</div>
           <div class="value">${sleepStart ? timeAgo(sleepStart) : (lastSleepEnd ? timeAgo(lastSleepEnd.end) : '—')}</div>
+          ${sleepStart ? `<button class="sleep-edit-link" data-action="edit-sleep-start">editar hora</button>` : ''}
         </div>
       </div>
       <div class="actions">
@@ -271,6 +441,7 @@
                   <span class="dot"></span>
                   <span class="desc">${labelFor(e)}</span>
                   <span class="time">${fmtClock(e.ts)}</span>
+                  <button class="edit" data-action="edit" data-id="${e.id}">✎</button>
                   <button class="del" data-action="del" data-id="${e.id}">✕</button>
                 </div>
               `).join('')}
@@ -278,11 +449,13 @@
           `).join('')
         }
       </div>
+      <button class="add-past" data-action="open-add">+ Agregar registro atrasado</button>
+      ${renderModal()}
     `;
 
     root.querySelectorAll('[data-action]').forEach(el=>{
       const action = el.getAttribute('data-action');
-      el.addEventListener('click', ()=>{
+      el.addEventListener('click', (ev)=>{
         if(action==='panel-feed') togglePanel('feed');
         else if(action==='panel-diaper') togglePanel('diaper');
         else if(action==='feed-pecho') logFeed('pecho');
@@ -292,8 +465,28 @@
         else if(action==='diaper-mixto') logDiaper('mixto');
         else if(action==='toggle-sleep') toggleSleep();
         else if(action==='del') deleteEntry(el.getAttribute('data-id'));
+        else if(action==='edit'){
+          const entry = entries.find(x=>x.id===el.getAttribute('data-id'));
+          if(entry) openEditModal(entry);
+        }
+        else if(action==='edit-sleep-start') openEditSleepStart();
+        else if(action==='open-add') openAddModal();
+        else if(action==='modal-cancel') closeModal();
+        else if(action==='modal-save') saveModal();
+        else if(action==='modal-backdrop'){ if(ev.target===el) closeModal(); }
       });
     });
+
+    if(modal){
+      root.querySelectorAll('[data-field]').forEach(el=>{
+        const field = el.getAttribute('data-field');
+        const evName = (el.type==='checkbox') ? 'change' : 'change';
+        el.addEventListener(evName, ()=>{
+          const val = el.type==='checkbox' ? el.checked : el.value;
+          modalSetField(field, val);
+        });
+      });
+    }
   }
 
   load();
