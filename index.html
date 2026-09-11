@@ -180,10 +180,12 @@
     return 'hace '+h+'h'+(rem?' '+rem+'min':'');
   }
   // Umbrales de alerta por tipo (horas): [aviso, máximo]
+  // Basado en guías pediátricas: AAP (tomas cada 2-3h), cambio de pañal cada 2-3h,
+  // ventanas de vigilia de 35-90 min para 0-4 semanas, extracción cada 2-3h.
   const THRESHOLDS = {
     feed: [2, 3],
-    diaper: [3, 4],
-    awake: [1, 1.5],
+    diaper: [2, 3],
+    awake: [0.75, 1.5],
     pump: [2, 3]
   };
   function statusBadge(hoursSince, kind){
