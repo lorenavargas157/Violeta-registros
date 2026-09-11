@@ -27,6 +27,8 @@
     --diaper-soft:#DEE7E0;
     --sleep:#726BA0;
     --sleep-soft:#E2DFF0;
+    --pump:#B9873F;
+    --pump-soft:#F1E2C8;
     --radius:18px;
   }
   *{box-sizing:border-box;}
@@ -48,13 +50,14 @@
   header .title{display:flex; align-items:baseline; justify-content:space-between;}
   header h1{font-size:26px; color:var(--ink);}
   header .age{font-size:14px; color:var(--ink-soft);}
-  .stats{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:16px 0 20px;}
+  .stats{display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin:16px 0 20px;}
   .stat{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:10px 8px; text-align:center;}
   .stat .label{font-size:11px; color:var(--ink-soft); letter-spacing:0.02em;}
   .stat .value{font-family:'Lora',serif; font-size:15px; margin-top:2px;}
   .stat.feed{border-color:var(--feed);}
   .stat.diaper{border-color:var(--diaper);}
   .stat.sleep{border-color:var(--sleep);}
+  .stat.pump{border-color:var(--pump);}
   .stat .badge{
     display:inline-block;
     margin-top:5px;
@@ -71,6 +74,7 @@
   .action.diaper{background:var(--diaper);}
   .action.sleep{background:var(--sleep);}
   .action.sleep.active{background:#3F3A63;}
+  .action.pump{background:var(--pump);}
   .action .icon{font-size:20px;}
   .subpanel{display:flex; gap:8px; margin-top:-4px; margin-bottom:2px; overflow:hidden; max-height:0; transition:max-height 0.2s ease;}
   .subpanel.open{max-height:60px;}
@@ -85,6 +89,7 @@
   .entry.feed .dot{background:var(--feed);}
   .entry.diaper .dot{background:var(--diaper);}
   .entry.sleep .dot{background:var(--sleep);}
+  .entry.pump .dot{background:var(--pump);}
   .entry .desc{flex:1; font-size:14px;}
   .entry .time{font-size:12px; color:var(--ink-soft);}
   .entry .del{background:none; border:none; color:var(--ink-soft); font-size:16px; cursor:pointer; padding:2px 6px;}
@@ -174,14 +179,17 @@
     const rem = m%60;
     return 'hace '+h+'h'+(rem?' '+rem+'min':'');
   }
-  // Máximo recomendado entre tomas para un recién nacido: ~3 horas
-  const FEED_MAX_HOURS = 3;
-  const FEED_WARN_HOURS = 2;
-  function feedStatus(ts){
-    if(!ts) return null;
-    const hours = (Date.now()-ts)/3600000;
-    if(hours < FEED_WARN_HOURS) return {label:'En tiempo', color:'#3E6B4F', bg:'#DCEBE0'};
-    if(hours < FEED_MAX_HOURS) return {label:'Se acerca la hora', color:'#8A6A00', bg:'#F5E8C7'};
+  // Umbrales de alerta por tipo (horas): [aviso, máximo]
+  const THRESHOLDS = {
+    feed: [2, 3],
+    diaper: [3, 4],
+    awake: [1, 1.5],
+    pump: [2, 3]
+  };
+  function statusBadge(hoursSince, kind){
+    const [warn, max] = THRESHOLDS[kind];
+    if(hoursSince < warn) return {label:'En tiempo', color:'#3E6B4F', bg:'#DCEBE0'};
+    if(hoursSince < max) return {label:'Se acerca la hora', color:'#8A6A00', bg:'#F5E8C7'};
     return {label:'¡Ya tocaba!', color:'#A43E3E', bg:'#F5D9D9'};
   }
 
@@ -216,6 +224,7 @@
       }
       return 'Empezó a dormir';
     }
+    if(e.type==='pump') return 'Extracción';
     return '';
   }
 
@@ -226,6 +235,10 @@
   function logDiaper(subtype){
     entries.push({id:Date.now()+'-'+Math.random(), type:'diaper', subtype, ts:Date.now()});
     openPanel = null; render(); save();
+  }
+  function logPump(){
+    entries.push({id:Date.now()+'-'+Math.random(), type:'pump', ts:Date.now()});
+    render(); save();
   }
   function toggleSleep(){
     if(sleepStart){
@@ -313,6 +326,7 @@
           <option value="feed" ${modal.type==='feed'?'selected':''}>Toma</option>
           <option value="diaper" ${modal.type==='diaper'?'selected':''}>Pañal</option>
           <option value="sleep" ${modal.type==='sleep'?'selected':''}>Sueño</option>
+          <option value="pump" ${modal.type==='pump'?'selected':''}>Extracción</option>
         </select>
       ` : '';
 
@@ -375,8 +389,16 @@
   function render(){
     const lastFeed = lastOf('feed');
     const lastDiaper = lastOf('diaper');
+    const lastPump = lastOf('pump');
     const sleepEntries = entries.filter(e=>e.type==='sleep');
     const lastSleepEnd = sleepEntries.length ? sleepEntries.reduce((a,b)=>a.end>b.end?a:b) : null;
+
+    function badgeHtml(ts, kind){
+      if(!ts) return '';
+      const hours = (Date.now()-ts)/3600000;
+      const s = statusBadge(hours, kind);
+      return `<span class="badge" style="color:${s.color};background:${s.bg}">${s.label}</span>`;
+    }
 
     const sorted = [...entries].sort((a,b)=>b.ts-a.ts);
     const groups = [];
@@ -398,16 +420,22 @@
         <div class="stat feed">
           <div class="label">Última toma</div>
           <div class="value">${lastFeed ? timeAgo(lastFeed.ts) : '—'}</div>
-          ${lastFeed ? (()=>{ const s=feedStatus(lastFeed.ts); return `<span class="badge" style="color:${s.color};background:${s.bg}">${s.label}</span>`; })() : ''}
+          ${badgeHtml(lastFeed?lastFeed.ts:null, 'feed')}
         </div>
         <div class="stat diaper">
           <div class="label">Último pañal</div>
           <div class="value">${lastDiaper ? timeAgo(lastDiaper.ts) : '—'}</div>
+          ${badgeHtml(lastDiaper?lastDiaper.ts:null, 'diaper')}
         </div>
         <div class="stat sleep">
           <div class="label">${sleepStart? 'Durmiendo desde' : 'Despertó'}</div>
           <div class="value">${sleepStart ? timeAgo(sleepStart) : (lastSleepEnd ? timeAgo(lastSleepEnd.end) : '—')}</div>
-          ${sleepStart ? `<button class="sleep-edit-link" data-action="edit-sleep-start">editar hora</button>` : ''}
+          ${sleepStart ? `<button class="sleep-edit-link" data-action="edit-sleep-start">editar hora</button>` : (lastSleepEnd ? badgeHtml(lastSleepEnd.end, 'awake') : '')}
+        </div>
+        <div class="stat pump">
+          <div class="label">Última extracción</div>
+          <div class="value">${lastPump ? timeAgo(lastPump.ts) : '—'}</div>
+          ${badgeHtml(lastPump?lastPump.ts:null, 'pump')}
         </div>
       </div>
       <div class="actions">
@@ -428,6 +456,9 @@
         </div>
         <button class="action sleep ${sleepStart?'active':''}" data-action="toggle-sleep">
           <span>${sleepStart ? 'Durmiendo… toca para despertar' : 'Sueño'}</span><span class="icon">${sleepStart?'⏰':'🌙'}</span>
+        </button>
+        <button class="action pump" data-action="log-pump">
+          <span>Extracción</span><span class="icon">🥛</span>
         </button>
       </div>
       <div class="timeline">
@@ -464,6 +495,7 @@
         else if(action==='diaper-sucio') logDiaper('sucio');
         else if(action==='diaper-mixto') logDiaper('mixto');
         else if(action==='toggle-sleep') toggleSleep();
+        else if(action==='log-pump') logPump();
         else if(action==='del') deleteEntry(el.getAttribute('data-id'));
         else if(action==='edit'){
           const entry = entries.find(x=>x.id===el.getAttribute('data-id'));
