@@ -131,6 +131,8 @@
   let sleepStart = null;
   let openPanel = null;
   let modal = null;
+  let notifEnabled = false;
+  let notified = {};
 
   const root = document.getElementById('root');
 
@@ -152,12 +154,15 @@
         const parsed = JSON.parse(raw);
         entries = parsed.entries || [];
         sleepStart = parsed.sleepStart || null;
+        notifEnabled = parsed.notifEnabled || false;
+        notified = parsed.notified || {};
       }
     }catch(e){ entries = []; sleepStart = null; }
     render();
+    scheduleNotifChecks();
   }
   function save(){
-    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify({entries, sleepStart})); }
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify({entries, sleepStart, notifEnabled, notified})); }
     catch(e){ console.error('No se pudo guardar', e); }
   }
 
@@ -181,18 +186,24 @@
   }
   // Umbrales de alerta por tipo (horas): [aviso, máximo]
   // Basado en guías pediátricas: AAP (tomas cada 2-3h), cambio de pañal cada 2-3h,
-  // ventanas de vigilia de 35-90 min para 0-4 semanas, extracción cada 2-3h.
+  // ventanas de vigilia de 35-90 min para 0-4 semanas, extracción cada 2-3h,
+  // y no dejarla dormir más de 3-4h seguidas sin despertar a comer.
   const THRESHOLDS = {
     feed: [2, 3],
     diaper: [2, 3],
     awake: [0.75, 1.5],
-    pump: [2, 3]
+    pump: [2, 3],
+    sleep: [3, 4]
   };
   function statusBadge(hoursSince, kind){
     const [warn, max] = THRESHOLDS[kind];
-    if(hoursSince < warn) return {label:'En tiempo', color:'#3E6B4F', bg:'#DCEBE0'};
-    if(hoursSince < max) return {label:'Se acerca la hora', color:'#8A6A00', bg:'#F5E8C7'};
-    return {label:'¡Ya tocaba!', color:'#A43E3E', bg:'#F5D9D9'};
+    if(hoursSince < warn) return {tier:'ok', label:'En tiempo', color:'#3E6B4F', bg:'#DCEBE0'};
+    if(hoursSince < max){
+      const remainMin = Math.max(1, Math.round((max - hoursSince) * 60));
+      return {tier:'warn', label:`Faltan ${remainMin} min`, color:'#8A6A00', bg:'#F5E8C7'};
+    }
+    const overMin = Math.round((hoursSince - max) * 60);
+    return {tier:'max', label: overMin < 1 ? '¡Ya es hora!' : `Atrasado ${overMin} min`, color:'#A43E3E', bg:'#F5D9D9'};
   }
 
   function lastOf(type){
@@ -226,7 +237,7 @@
       }
       return 'Empezó a dormir';
     }
-    if(e.type==='pump') return 'Extracción';
+    if(e.type==='pump') return 'Extracción'+(e.amount?` (${e.amount} ml)`:'');
     return '';
   }
 
@@ -238,9 +249,74 @@
     entries.push({id:Date.now()+'-'+Math.random(), type:'diaper', subtype, ts:Date.now()});
     openPanel = null; render(); save();
   }
-  function logPump(){
-    entries.push({id:Date.now()+'-'+Math.random(), type:'pump', ts:Date.now()});
+  function logPump(amount){
+    entries.push({id:Date.now()+'-'+Math.random(), type:'pump', ts:Date.now(), amount: amount || null});
+    openPanel = null;
     render(); save();
+  }
+
+  // --- Recordatorios en el celular (funcionan mientras la app esté abierta,
+  // aunque sea en segundo plano; no son notificaciones push verdaderas) ---
+  function fireNotification(title, body){
+    try{
+      if('serviceWorker' in navigator && navigator.serviceWorker.controller){
+        navigator.serviceWorker.ready.then(reg=>reg.showNotification(title,{body, icon:'icons/icon-192.png', tag:title}));
+      } else if('Notification' in window){
+        new Notification(title, {body, icon:'icons/icon-192.png'});
+      }
+    }catch(e){ console.error('No se pudo notificar', e); }
+  }
+  async function enableNotifications(){
+    if(!('Notification' in window)){
+      alert('Este navegador no soporta notificaciones.');
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    notifEnabled = (perm === 'granted');
+    if(!notifEnabled) alert('No se activaron los permisos de notificación.');
+    render(); save();
+  }
+  function checkNotifications(){
+    if(!notifEnabled || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const check = (kind, ts, label)=>{
+      if(!ts) return;
+      const hours = (Date.now()-ts)/3600000;
+      const max = THRESHOLDS[kind][1];
+      if(hours >= max && notified[kind] !== ts){
+        fireNotification('¡Ya es hora! '+label, 'Ya pasaron '+max+'h desde la última vez.');
+        notified[kind] = ts;
+        save();
+      }
+    };
+    check('feed', lastOf('feed')?.ts, 'Toma');
+    check('diaper', lastOf('diaper')?.ts, 'Pañal');
+    check('pump', lastOf('pump')?.ts, 'Extracción');
+
+    if(sleepStart){
+      const hours = (Date.now()-sleepStart)/3600000;
+      const max = THRESHOLDS.sleep[1];
+      if(hours >= max && notified.sleep !== sleepStart){
+        fireNotification('¡Ya es hora! Despertar para comer', 'Lleva más de '+max+'h dormida.');
+        notified.sleep = sleepStart;
+        save();
+      }
+    } else {
+      const sleepEntries = entries.filter(e=>e.type==='sleep');
+      const lastEnd = sleepEntries.length ? sleepEntries.reduce((a,b)=>a.end>b.end?a:b).end : null;
+      if(lastEnd){
+        const hours = (Date.now()-lastEnd)/3600000;
+        const max = THRESHOLDS.awake[1];
+        if(hours >= max && notified.awake !== lastEnd){
+          fireNotification('Puede estar sobrecansada', 'Lleva despierta más del tiempo recomendado.');
+          notified.awake = lastEnd;
+          save();
+        }
+      }
+    }
+  }
+  function scheduleNotifChecks(){
+    checkNotifications();
+    setInterval(checkNotifications, 30000);
   }
   function toggleSleep(){
     if(sleepStart){
@@ -262,7 +338,8 @@
   function openEditModal(entry){
     modal = {
       mode:'edit', id:entry.id, type:entry.type, subtype:entry.subtype||'',
-      start:toInputVal(entry.ts), end:entry.end?toInputVal(entry.end):'', ongoing:false
+      start:toInputVal(entry.ts), end:entry.end?toInputVal(entry.end):'', ongoing:false,
+      amount: entry.amount || ''
     };
     render();
   }
@@ -288,6 +365,7 @@
       if(e){
         e.ts = fromInputVal(modal.start) || e.ts;
         if(e.type==='feed' || e.type==='diaper') e.subtype = modal.subtype;
+        if(e.type==='pump') e.amount = modal.amount ? Number(modal.amount) : null;
         if(e.type==='sleep' && modal.end) e.end = fromInputVal(modal.end);
       }
       closeModal(); save(); return;
@@ -300,6 +378,8 @@
         } else {
           entries.push({id:Date.now()+'-'+Math.random(), type:'sleep', ts:startTs, end: fromInputVal(modal.end) || startTs});
         }
+      } else if(modal.type==='pump'){
+        entries.push({id:Date.now()+'-'+Math.random(), type:'pump', ts:startTs, amount: modal.amount ? Number(modal.amount) : null});
       } else {
         entries.push({id:Date.now()+'-'+Math.random(), type:modal.type, subtype:modal.subtype, ts:startTs});
       }
@@ -348,6 +428,10 @@
             <option value="sucio" ${modal.subtype==='sucio'?'selected':''}>Sucio</option>
             <option value="mixto" ${modal.subtype==='mixto'?'selected':''}>Mixto</option>
           </select>`;
+      } else if(modal.type==='pump'){
+        subtypeField = `
+          <label>Cantidad (ml, opcional)</label>
+          <input type="number" inputmode="numeric" data-field="amount" value="${modal.amount||''}">`;
       }
 
       let sleepFields = '';
@@ -432,7 +516,8 @@
         <div class="stat sleep">
           <div class="label">${sleepStart? 'Durmiendo desde' : 'Despertó'}</div>
           <div class="value">${sleepStart ? timeAgo(sleepStart) : (lastSleepEnd ? timeAgo(lastSleepEnd.end) : '—')}</div>
-          ${sleepStart ? `<button class="sleep-edit-link" data-action="edit-sleep-start">editar hora</button>` : (lastSleepEnd ? badgeHtml(lastSleepEnd.end, 'awake') : '')}
+          ${sleepStart ? badgeHtml(sleepStart, 'sleep') : (lastSleepEnd ? badgeHtml(lastSleepEnd.end, 'awake') : '')}
+          ${sleepStart ? `<button class="sleep-edit-link" data-action="edit-sleep-start">editar hora</button>` : ''}
         </div>
         <div class="stat pump">
           <div class="label">Última extracción</div>
@@ -459,9 +544,19 @@
         <button class="action sleep ${sleepStart?'active':''}" data-action="toggle-sleep">
           <span>${sleepStart ? 'Durmiendo… toca para despertar' : 'Sueño'}</span><span class="icon">${sleepStart?'⏰':'🌙'}</span>
         </button>
-        <button class="action pump" data-action="log-pump">
-          <span>Extracción</span><span class="icon">🥛</span>
-        </button>
+        <div>
+          <button class="action pump" data-action="panel-pump"><span>Extracción</span><span class="icon">🥛</span></button>
+          <div class="subpanel pump ${openPanel==='pump'?'open':''}" style="align-items:center;">
+            <input type="number" inputmode="numeric" placeholder="ml" id="pump-amount-input" style="border:1px solid var(--line); border-radius:12px; padding:9px; width:70px; font-size:13px;">
+            <button data-action="pump-save" style="background:var(--pump); color:#fff; border:none;">Guardar</button>
+          </div>
+        </div>
+      </div>
+      <div class="notif-row" style="text-align:center; margin:-10px 0 18px;">
+        ${notifEnabled
+          ? `<span style="font-size:12px; color:var(--ink-soft);">🔔 Recordatorios activados</span>`
+          : `<button class="add-past" data-action="enable-notif" style="border-style:solid;">🔔 Activar recordatorios en el celular</button>`
+        }
       </div>
       <div class="timeline">
         <h2>Registro</h2>
@@ -498,6 +593,13 @@
         else if(action==='diaper-mixto') logDiaper('mixto');
         else if(action==='toggle-sleep') toggleSleep();
         else if(action==='log-pump') logPump();
+        else if(action==='panel-pump') togglePanel('pump');
+        else if(action==='pump-save'){
+          const input = document.getElementById('pump-amount-input');
+          const val = input && input.value ? Number(input.value) : null;
+          logPump(val);
+        }
+        else if(action==='enable-notif') enableNotifications();
         else if(action==='del') deleteEntry(el.getAttribute('data-id'));
         else if(action==='edit'){
           const entry = entries.find(x=>x.id===el.getAttribute('data-id'));
