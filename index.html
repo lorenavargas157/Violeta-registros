@@ -96,10 +96,13 @@
   .entry .del{background:none; border:none; color:var(--ink-soft); font-size:16px; cursor:pointer; padding:2px 6px;}
   .empty{text-align:center; color:var(--ink-soft); font-size:14px; padding:24px 10px; border:1px dashed var(--line); border-radius:var(--radius);}
 
-  .export-row{display:flex; gap:8px; margin-top:10px;}
+  .export-row{display:flex; gap:6px; align-items:center;}
+  .export-row select{
+    border:1px solid var(--line); border-radius:10px; padding:6px 8px; font-size:12px; color:var(--ink); background:#fff;
+  }
   .export-row button{
-    flex:1; background:var(--card); border:1px solid var(--line); color:var(--ink);
-    border-radius:14px; padding:10px; font-size:13px; cursor:pointer;
+    background:var(--card); border:1px solid var(--line); color:var(--ink);
+    border-radius:10px; padding:6px 10px; font-size:13px; cursor:pointer;
   }
   #print-area{display:none;}
   @media print{
@@ -147,6 +150,7 @@
   let modal = null;
   let notifEnabled = false;
   let notified = {};
+  let exportRange = 'today';
 
   const root = document.getElementById('root');
 
@@ -360,8 +364,19 @@
     const map = {feed:'Toma', diaper:'Pañal', sleep:'Sueño', pump:'Extracción'};
     return map[type] || type;
   }
+  function getRangeCutoff(){
+    const now = new Date();
+    if(exportRange==='today'){
+      return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    }
+    if(exportRange==='2days'){
+      return Date.now() - 2*86400000;
+    }
+    return 0;
+  }
   function exportCSV(){
-    const sorted = [...entries].sort((a,b)=>a.ts-b.ts);
+    const cutoff = getRangeCutoff();
+    const sorted = entries.filter(e=>e.ts>=cutoff).sort((a,b)=>a.ts-b.ts);
     const rows = [['Fecha','Hora','Tipo','Detalle']];
     sorted.forEach(e=>{
       rows.push([fmtFullDate(e.ts), fmtClock(e.ts), typeLabel(e.type), labelFor(e)]);
@@ -378,7 +393,8 @@
     setTimeout(()=>URL.revokeObjectURL(url), 1000);
   }
   function preparePrintArea(){
-    const sorted = [...entries].sort((a,b)=>a.ts-b.ts);
+    const cutoff = getRangeCutoff();
+    const sorted = entries.filter(e=>e.ts>=cutoff).sort((a,b)=>a.ts-b.ts);
     const rowsHtml = sorted.map(e=>`<tr><td>${fmtFullDate(e.ts)}</td><td>${fmtClock(e.ts)}</td><td>${typeLabel(e.type)}</td><td>${labelFor(e)}</td></tr>`).join('');
     document.getElementById('print-area').innerHTML = `
       <h1 style="font-family:sans-serif;">Registro de Violeta</h1>
@@ -629,7 +645,18 @@
         }
       </div>
       <div class="timeline">
-        <h2>Registro</h2>
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+          <h2 style="margin:0;">Registro</h2>
+          <div class="export-row">
+            <select id="export-range" data-action="noop">
+              <option value="today" ${exportRange==='today'?'selected':''}>Hoy</option>
+              <option value="2days" ${exportRange==='2days'?'selected':''}>Últimos 2 días</option>
+              <option value="all" ${exportRange==='all'?'selected':''}>Todo</option>
+            </select>
+            <button data-action="export-csv" title="Descargar CSV">⬇</button>
+            <button data-action="print-log" title="Imprimir / PDF">🖨</button>
+          </div>
+        </div>
         ${groups.length===0 ? '<div class="empty">Aún no hay registros. Toca un botón arriba para empezar.</div>' :
           groups.map(g=>`
             <div class="day-group">
@@ -648,16 +675,16 @@
         }
       </div>
       <button class="add-past" data-action="open-add">+ Agregar registro atrasado</button>
-      <div class="export-row">
-        <button data-action="export-csv">⬇ Descargar (Excel/CSV)</button>
-        <button data-action="print-log">🖨 Imprimir / PDF</button>
-      </div>
       ${renderModal()}
     `;
+
+    const rangeSel = document.getElementById('export-range');
+    if(rangeSel) rangeSel.addEventListener('change', ()=>{ exportRange = rangeSel.value; });
 
     root.querySelectorAll('[data-action]').forEach(el=>{
       const action = el.getAttribute('data-action');
       el.addEventListener('click', (ev)=>{
+        if(action==='noop') return;
         if(action==='panel-feed') togglePanel('feed');
         else if(action==='panel-diaper') togglePanel('diaper');
         else if(action==='feed-pecho') logFeed('pecho');
