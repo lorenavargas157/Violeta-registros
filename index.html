@@ -96,6 +96,18 @@
   .entry .del{background:none; border:none; color:var(--ink-soft); font-size:16px; cursor:pointer; padding:2px 6px;}
   .empty{text-align:center; color:var(--ink-soft); font-size:14px; padding:24px 10px; border:1px dashed var(--line); border-radius:var(--radius);}
 
+  .export-row{display:flex; gap:8px; margin-top:10px;}
+  .export-row button{
+    flex:1; background:var(--card); border:1px solid var(--line); color:var(--ink);
+    border-radius:14px; padding:10px; font-size:13px; cursor:pointer;
+  }
+  #print-area{display:none;}
+  @media print{
+    body *{visibility:hidden;}
+    #print-area, #print-area *{visibility:visible;}
+    #print-area{display:block; position:absolute; top:0; left:0; width:100%;}
+  }
+
   .entry .edit{background:none; border:none; color:var(--ink-soft); font-size:14px; cursor:pointer; padding:2px 6px;}
   .add-past{
     display:block; width:100%; text-align:center; background:none; border:1px dashed var(--line);
@@ -124,6 +136,7 @@
 </head>
 <body>
 <div id="root" class="app"></div>
+<div id="print-area"></div>
 <script>
 (function(){
   const STORAGE_KEY = 'violeta-log';
@@ -340,6 +353,52 @@
     entries = entries.filter(e=>e.id!==id);
     render(); save();
   }
+  function fmtFullDate(ts){
+    return new Date(ts).toLocaleDateString('es-CO',{day:'2-digit',month:'2-digit',year:'numeric'});
+  }
+  function typeLabel(type){
+    const map = {feed:'Toma', diaper:'Pañal', sleep:'Sueño', pump:'Extracción'};
+    return map[type] || type;
+  }
+  function exportCSV(){
+    const sorted = [...entries].sort((a,b)=>a.ts-b.ts);
+    const rows = [['Fecha','Hora','Tipo','Detalle']];
+    sorted.forEach(e=>{
+      rows.push([fmtFullDate(e.ts), fmtClock(e.ts), typeLabel(e.type), labelFor(e)]);
+    });
+    const csv = rows.map(r=> r.map(f=>`"${String(f).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+    const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `violeta-registro-${fmtFullDate(Date.now()).replace(/\//g,'-')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  }
+  function preparePrintArea(){
+    const sorted = [...entries].sort((a,b)=>a.ts-b.ts);
+    const rowsHtml = sorted.map(e=>`<tr><td>${fmtFullDate(e.ts)}</td><td>${fmtClock(e.ts)}</td><td>${typeLabel(e.type)}</td><td>${labelFor(e)}</td></tr>`).join('');
+    document.getElementById('print-area').innerHTML = `
+      <h1 style="font-family:sans-serif;">Registro de Violeta</h1>
+      <p style="font-family:sans-serif; font-size:12px; color:#555;">Generado el ${fmtFullDate(Date.now())} ${fmtClock(Date.now())}</p>
+      <table style="width:100%; border-collapse:collapse; font-family:sans-serif; font-size:12px;">
+        <thead><tr>
+          <th style="text-align:left; border-bottom:1px solid #999; padding:6px;">Fecha</th>
+          <th style="text-align:left; border-bottom:1px solid #999; padding:6px;">Hora</th>
+          <th style="text-align:left; border-bottom:1px solid #999; padding:6px;">Tipo</th>
+          <th style="text-align:left; border-bottom:1px solid #999; padding:6px;">Detalle</th>
+        </tr></thead>
+        <tbody>${rowsHtml.replace(/<td>/g,'<td style="padding:6px; border-bottom:1px solid #eee;">')}</tbody>
+      </table>
+    `;
+  }
+  function printLog(){
+    preparePrintArea();
+    setTimeout(()=>window.print(), 50);
+  }
+
   function togglePanel(name){ openPanel = openPanel===name ? null : name; render(); }
 
   function openAddModal(){
@@ -589,6 +648,10 @@
         }
       </div>
       <button class="add-past" data-action="open-add">+ Agregar registro atrasado</button>
+      <div class="export-row">
+        <button data-action="export-csv">⬇ Descargar (Excel/CSV)</button>
+        <button data-action="print-log">🖨 Imprimir / PDF</button>
+      </div>
       ${renderModal()}
     `;
 
@@ -611,6 +674,8 @@
           logPump(val);
         }
         else if(action==='enable-notif') enableNotifications();
+        else if(action==='export-csv') exportCSV();
+        else if(action==='print-log') printLog();
         else if(action==='del') deleteEntry(el.getAttribute('data-id'));
         else if(action==='edit'){
           const entry = entries.find(x=>x.id===el.getAttribute('data-id'));
