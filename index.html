@@ -91,6 +91,7 @@
   .entry.sleep .dot{background:var(--sleep);}
   .entry.pump .dot{background:var(--pump);}
   .entry .desc{flex:1; font-size:14px;}
+  .entry .desc .sub{display:block; font-size:11px; color:var(--ink-soft); margin-top:1px;}
   .entry .time{font-size:12px; color:var(--ink-soft);}
   .entry .del{background:none; border:none; color:var(--ink-soft); font-size:16px; cursor:pointer; padding:2px 6px;}
   .empty{text-align:center; color:var(--ink-soft); font-size:14px; padding:24px 10px; border:1px dashed var(--line); border-radius:var(--radius);}
@@ -223,6 +224,16 @@
     if(sameDay(d,yest)) return 'Ayer';
     return d.toLocaleDateString('es-CO',{day:'numeric',month:'short'});
   }
+  function awakeBeforeSleep(sleepEntry){
+    const candidates = entries.filter(e=>e.type==='sleep' && e.end && e.id!==sleepEntry.id && e.end<=sleepEntry.ts);
+    if(!candidates.length) return null;
+    const prev = candidates.reduce((a,b)=> a.end>b.end?a:b);
+    const diffMin = Math.round((sleepEntry.ts - prev.end)/60000);
+    if(diffMin < 0) return null;
+    const h = Math.floor(diffMin/60), m = diffMin%60;
+    return h>0 ? `${h}h ${m}min` : `${m}min`;
+  }
+
   function labelFor(e){
     if(e.type==='feed') return e.subtype==='pecho' ? 'Toma de pecho' : 'Toma de biberón';
     if(e.type==='diaper'){
@@ -567,7 +578,7 @@
               ${g.items.map(e=>`
                 <div class="entry ${e.type}">
                   <span class="dot"></span>
-                  <span class="desc">${labelFor(e)}</span>
+                  <span class="desc">${labelFor(e)}${e.type==='sleep' ? (()=>{ const a=awakeBeforeSleep(e); return a ? `<span class="sub">Despierta antes: ${a}</span>` : ''; })() : ''}</span>
                   <span class="time">${fmtClock(e.ts)}</span>
                   <button class="edit" data-action="edit" data-id="${e.id}">✎</button>
                   <button class="del" data-action="del" data-id="${e.id}">✕</button>
